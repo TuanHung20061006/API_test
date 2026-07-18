@@ -1,4 +1,5 @@
-from app import app, db
+from app import app
+from extensions import db
 import models  # noqa: F401
 
 

@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
-from app import db
+from extensions import db
+from utils.password import hash_password, verify_password
 
 
 def timezone_now():
@@ -34,6 +35,12 @@ class User(db.Model):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+    def set_password(self, password):
+        self.password_hash = hash_password(password)
+
+    def check_password(self, password):
+        return verify_password(password, self.password_hash)
 
     def __repr__(self):
         return f"<User {self.email}>"

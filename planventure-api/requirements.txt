@@ -5,4 +5,5 @@ flask-cors==4.0.0
 python-dotenv==1.0.0
 
 # Authentication
+bcrypt==5.0.0
 flask-jwt-extended==4.7.4
