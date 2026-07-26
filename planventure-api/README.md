@@ -7,6 +7,9 @@ Planventure API is a Flask REST API for user authentication and trip planning. I
 - User registration with email validation
 - Password hashing with bcrypt
 - JWT access and refresh token generation
+- Refresh endpoint for rotating access tokens
+- Request rate limiting for authentication endpoints
+- Database migrations and automated API tests
 - Auth middleware for protected routes
 - Trip CRUD endpoints
 - Default itinerary template generation
@@ -76,12 +79,53 @@ CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,h
 DATABASE_URL=sqlite:///D:/python/API/planventure-api/planventure.db
 ```
 
+### Weather Configuration
+
+The trip weather endpoint uses WeatherAPI. Keep the provider key in `.env`; never
+send it to the frontend or commit it to source control.
+
+| Variable | Default | Description |
+|---|---|---|
+| `WEATHER_API_KEY` | empty | WeatherAPI provider key; required in production |
+| `WEATHER_API_BASE_URL` | `https://api.weatherapi.com/v1` | Provider API base URL |
+| `WEATHER_API_CONNECT_TIMEOUT_SECONDS` | `3.05` | Connection timeout |
+| `WEATHER_API_READ_TIMEOUT_SECONDS` | `8` | Response read timeout |
+| `WEATHER_CACHE_TTL_SECONDS` | `900` | Successful normalized forecast cache TTL |
+| `WEATHER_RATE_LIMIT` | `30 per minute;300 per day` | Per-user weather endpoint limit |
+| `CACHE_TYPE` | `SimpleCache` | Flask-Caching backend |
+| `CACHE_REDIS_URL` | `redis://localhost:6379/1` | Redis URL when using `RedisCache` |
+| `RATELIMIT_STORAGE_URI` | `memory://` | Flask-Limiter storage backend |
+
+Local development can use the defaults:
+
+```env
+WEATHER_API_KEY=
+WEATHER_API_BASE_URL=https://api.weatherapi.com/v1
+WEATHER_API_CONNECT_TIMEOUT_SECONDS=3.05
+WEATHER_API_READ_TIMEOUT_SECONDS=8
+WEATHER_CACHE_TTL_SECONDS=900
+WEATHER_RATE_LIMIT=30 per minute;300 per day
+CACHE_TYPE=SimpleCache
+CACHE_REDIS_URL=redis://localhost:6379/1
+RATELIMIT_STORAGE_URI=memory://
+```
+
+The application starts without `WEATHER_API_KEY` in development and tests, but
+the weather endpoint returns `503` until a key is configured. Production startup
+requires the key.
+
 ## Initialize Database
 
 Run the database initialization script:
 
 ```powershell
 python init_db.py
+```
+
+For new deployments and later schema changes, use migrations:
+
+```powershell
+python -m flask --app app db upgrade
 ```
 
 Expected output:
@@ -173,6 +217,15 @@ GET /auth/me
 Authorization: Bearer <access_token>
 ```
 
+### Refresh Access Token
+
+```http
+POST /auth/refresh
+Authorization: Bearer <refresh_token>
+```
+
+The response contains a new `access_token`.
+
 ## Trip Routes
 
 All trip routes require:
@@ -244,11 +297,127 @@ Body:
 }
 ```
 
+`PATCH` updates selected fields. `PUT` requires destination and both dates. If
+destination or dates change without an explicit itinerary, the default itinerary
+is regenerated.
+
 ### Delete Trip
 
 ```http
 DELETE /trip/1
 Authorization: Bearer <access_token>
+```
+
+### Get Trip Weather
+
+```http
+GET /trip/1/weather
+Authorization: Bearer <access_token>
+```
+
+Equivalent curl request:
+
+```bash
+curl -H "Authorization: Bearer <access-token>" http://localhost:5000/trip/1/weather
+```
+
+The authenticated user must own the trip. A missing trip and a trip owned by
+another user both return `404`.
+
+Successful response:
+
+```json
+{
+  "trip": {
+    "id": 1,
+    "destination": "Da Nang, Vietnam",
+    "start_date": "2026-08-01",
+    "end_date": "2026-08-05"
+  },
+  "coverage": {
+    "requested_from": "2026-08-01",
+    "requested_through": "2026-08-05",
+    "available_through": "2026-08-05",
+    "complete": true
+  },
+  "weather": {
+    "provider": "weatherapi",
+    "location": {
+      "name": "Da Nang",
+      "region": "Da Nang",
+      "country": "Vietnam",
+      "latitude": 16.07,
+      "longitude": 108.22,
+      "timezone": "Asia/Ho_Chi_Minh",
+      "localtime": "2026-08-01 09:00"
+    },
+    "current": {
+      "updated_at": "2026-08-01 08:45",
+      "temperature_c": 30.0,
+      "feels_like_c": 34.0,
+      "condition": "Partly cloudy",
+      "condition_code": 1003,
+      "humidity_percent": 70,
+      "wind_kph": 12.0,
+      "precipitation_mm": 0.0,
+      "visibility_km": 10.0,
+      "uv_index": 7.0
+    },
+    "forecast": [
+      {
+        "date": "2026-08-01",
+        "temperature": {
+          "min_c": 26.0,
+          "max_c": 33.0,
+          "average_c": 29.0
+        },
+        "condition": {
+          "text": "Partly cloudy",
+          "code": 1003
+        },
+        "chance_of_rain_percent": 30,
+        "total_precipitation_mm": 0.5,
+        "max_wind_kph": 20.0,
+        "average_humidity_percent": 74,
+        "uv_index": 7.0,
+        "sunrise": "05:25 AM",
+        "sunset": "06:18 PM"
+      }
+    ],
+    "alerts": []
+  },
+  "meta": {
+    "cached": false
+  }
+}
+```
+
+- `coverage.complete` is `true` only when the entire trip is inside WeatherAPI's
+  current 14-day forecast window.
+- `coverage.available_through` is the final trip date currently covered by the
+  provider. It may be earlier than the trip end date.
+- `meta.cached` indicates whether the normalized provider forecast came from
+  cache. Every HTTP request is still counted by the per-user rate limit.
+
+Main status codes:
+
+- `200`: Forecast returned successfully.
+- `401`: JWT is missing or invalid.
+- `404`: Trip does not exist or belongs to another user.
+- `422`: Trip dates or weather location cannot be forecast.
+- `429`: Per-user weather request limit was exceeded.
+- `503`: Weather provider is unavailable or not configured.
+- `504`: Weather provider timed out.
+
+Weather errors use a stable machine-readable code:
+
+```json
+{
+  "error": {
+    "code": "WEATHER_SERVICE_UNAVAILABLE",
+    "message": "Dịch vụ thời tiết tạm thời không khả dụng."
+  }
+}
 ```
 
 ## Bruno Testing Flow
@@ -295,6 +464,43 @@ Content-Type
 Authorization
 ```
 
+## Tests
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+GitHub Actions runs the test suite for pushes and pull requests.
+
+## Production
+
+Set `FLASK_ENV=production`, strong `SECRET_KEY` and `JWT_SECRET_KEY` values,
+`WEATHER_API_KEY`, and a production `DATABASE_URL`. Missing production secrets
+prevent startup.
+
+On Windows, serve the API with Waitress:
+
+```powershell
+waitress-serve --host=0.0.0.0 --port=5000 wsgi:app
+```
+
+For multiple application instances, configure shared rate-limit storage (for
+example Redis) through `RATELIMIT_STORAGE_URI`. The in-memory storage is only
+appropriate for local development because limits are not shared between workers.
+
+Use shared Redis for both forecast cache and Flask-Limiter in a multi-instance
+deployment:
+
+```env
+CACHE_TYPE=RedisCache
+CACHE_REDIS_URL=redis://redis:6379/1
+RATELIMIT_STORAGE_URI=redis://redis:6379/2
+```
+
+The same Redis server can be used, but separate Redis databases or namespaces
+are recommended so cache eviction and rate-limit counters remain operationally
+independent.
+
 ## Notes
 
 - The base trip route is `/trip`, not `/trips`.
@@ -302,3 +508,5 @@ Authorization
 - `.env` and local SQLite database files are ignored by git.
 - Protected routes return `401` if the JWT token is missing or invalid.
 - Trip lookup is scoped to the authenticated user, so users can only access their own trips.
+- `/health` verifies database connectivity and returns `503` when unavailable.
+- Request bodies are limited to 1 MiB by default.

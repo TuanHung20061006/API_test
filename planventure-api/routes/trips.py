@@ -9,6 +9,7 @@ from utils.itinerary import generate_default_itinerary
 
 
 trips_bp = Blueprint("trips", __name__, url_prefix="/trip")
+MAX_DESTINATION_LENGTH = 255
 
 
 def parse_date(value, field_name):
@@ -29,6 +30,8 @@ def validate_trip_payload(data, partial=False):
     if destination is not None:
         if not isinstance(destination, str) or not destination.strip():
             errors["destination"] = "Destination must be a non-empty string."
+        elif len(destination.strip()) > MAX_DESTINATION_LENGTH:
+            errors["destination"] = "Destination must be 255 characters or fewer."
         else:
             trip_data["destination"] = destination.strip()
     elif not partial:
@@ -49,7 +52,21 @@ def validate_trip_payload(data, partial=False):
         if not isinstance(coordinates, dict):
             errors["coordinates"] = "Coordinates must be an object."
         else:
-            trip_data["coordinates"] = coordinates
+            lat = coordinates.get("lat")
+            lng = coordinates.get("lng")
+            if (
+                isinstance(lat, bool)
+                or not isinstance(lat, (int, float))
+                or not -90 <= lat <= 90
+                or isinstance(lng, bool)
+                or not isinstance(lng, (int, float))
+                or not -180 <= lng <= 180
+            ):
+                errors["coordinates"] = (
+                    "Coordinates require numeric lat (-90..90) and lng (-180..180)."
+                )
+            else:
+                trip_data["coordinates"] = {"lat": lat, "lng": lng}
 
     itinerary = data.get("itinerary")
     if itinerary is not None:
@@ -124,7 +141,7 @@ def update_trip(trip_id):
         return jsonify({"error": "Trip not found."}), 404
 
     data = request.get_json(silent=True) or {}
-    trip_data, errors = validate_trip_payload(data, partial=True)
+    trip_data, errors = validate_trip_payload(data, partial=request.method == "PATCH")
 
     if errors:
         return jsonify({"errors": errors}), 400
@@ -137,8 +154,20 @@ def update_trip(trip_id):
     if start_date > end_date:
         return jsonify({"error": "start_date must be before or equal to end_date."}), 400
 
+    should_regenerate_itinerary = (
+        "itinerary" not in trip_data
+        and any(field in trip_data for field in ("destination", "start_date", "end_date"))
+    )
+
     for field_name, value in trip_data.items():
         setattr(trip, field_name, value)
+
+    if should_regenerate_itinerary:
+        trip.itinerary = generate_default_itinerary(
+            start_date,
+            end_date,
+            trip_data.get("destination", trip.destination),
+        )
 
     db.session.commit()
 

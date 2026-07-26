@@ -1,0 +1,53 @@
+{
+  "location": {
+    "name": "Da Nang",
+    "region": "Da Nang",
+    "country": "Vietnam",
+    "lat": 16.07,
+    "lon": 108.22,
+    "tz_id": "Asia/Ho_Chi_Minh",
+    "localtime": "2026-07-25 14:30"
+  },
+  "current": {
+    "last_updated": "2026-07-25 14:15",
+    "temp_c": 31.0,
+    "feelslike_c": 36.0,
+    "condition": {
+      "text": "Partly cloudy",
+      "code": 1003
+    },
+    "humidity": 70,
+    "wind_kph": 13.0,
+    "precip_mm": 0.2,
+    "vis_km": 10.0,
+    "uv": 8.0
+  },
+  "forecast": {
+    "forecastday": [
+      {
+        "date": "2026-07-26",
+        "day": {
+          "mintemp_c": 26.0,
+          "maxtemp_c": 33.0,
+          "avgtemp_c": 29.0,
+          "condition": {
+            "text": "Moderate rain",
+            "code": 1189
+          },
+          "daily_chance_of_rain": 80,
+          "totalprecip_mm": 8.2,
+          "maxwind_kph": 22.0,
+          "avghumidity": 76,
+          "uv": 7.0
+        },
+        "astro": {
+          "sunrise": "05:25 AM",
+          "sunset": "06:18 PM"
+        }
+      }
+    ]
+  },
+  "alerts": {
+    "alert": []
+  }
+}

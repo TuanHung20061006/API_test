@@ -1,9 +1,10 @@
 import re
 
 from flask import Blueprint, g, jsonify, request
+from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy.exc import IntegrityError
 
-from extensions import db
+from extensions import db, limiter
 from middleware import auth_required
 from models import User
 from utils.jwt import generate_tokens
@@ -28,6 +29,7 @@ def find_user_by_email(email):
 
 
 @auth_bp.route("/register", methods=["POST"])
+@limiter.limit("5 per minute")
 def register():
     data = request.get_json(silent=True) or {}
     email = normalize_email(data.get("email"))
@@ -44,7 +46,10 @@ def register():
         return jsonify({"error": "A user with this email already exists."}), 409
 
     user = User(email=email, password_hash="")
-    user.set_password(password)
+    try:
+        user.set_password(password)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     db.session.add(user)
     try:
@@ -59,6 +64,7 @@ def register():
 
 
 @auth_bp.route("/login", methods=["POST"])
+@limiter.limit("10 per minute")
 def login():
     data = request.get_json(silent=True) or {}
     email = normalize_email(data.get("email"))
@@ -74,6 +80,20 @@ def login():
     tokens = generate_tokens(user.id, {"email": user.email})
 
     return jsonify({"message": "Login successful.", "user": user.to_dict(), **tokens}), 200
+
+
+@auth_bp.route("/refresh", methods=["POST"])
+@jwt_required(refresh=True)
+def refresh():
+    user = db.session.get(User, int(get_jwt_identity()))
+    if not user:
+        return jsonify({"error": "Authentication required."}), 401
+
+    from utils.jwt import generate_access_token
+
+    return jsonify(
+        {"access_token": generate_access_token(user.id, {"email": user.email})}
+    ), 200
 
 
 @auth_bp.route("/me", methods=["GET"])

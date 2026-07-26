@@ -23,6 +23,10 @@ def parse_cors_origins():
     return [origin.strip() for origin in cors_origins.split(",") if origin.strip()]
 
 
+def env_bool(name, default=False):
+    return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
     JWT_SECRET_KEY = os.getenv(
@@ -41,6 +45,30 @@ class Config:
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     CORS_ORIGINS = parse_cors_origins()
+    RATELIMIT_ENABLED = env_bool("RATELIMIT_ENABLED", True)
+    RATELIMIT_STORAGE_URI = os.getenv("RATELIMIT_STORAGE_URI", "memory://")
+    MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH_BYTES", str(1024 * 1024)))
+    WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "").strip()
+    WEATHER_API_BASE_URL = os.getenv(
+        "WEATHER_API_BASE_URL", "https://api.weatherapi.com/v1"
+    ).rstrip("/")
+    WEATHER_API_CONNECT_TIMEOUT_SECONDS = float(
+        os.getenv("WEATHER_API_CONNECT_TIMEOUT_SECONDS", "3.05")
+    )
+    WEATHER_API_READ_TIMEOUT_SECONDS = float(
+        os.getenv("WEATHER_API_READ_TIMEOUT_SECONDS", "8")
+    )
+    WEATHER_CACHE_TTL_SECONDS = int(os.getenv("WEATHER_CACHE_TTL_SECONDS", "900"))
+    WEATHER_RATE_LIMIT = os.getenv(
+        "WEATHER_RATE_LIMIT", "30 per minute;300 per day"
+    )
+    CACHE_TYPE = os.getenv("CACHE_TYPE", "SimpleCache")
+    CACHE_DEFAULT_TIMEOUT = int(os.getenv("CACHE_DEFAULT_TIMEOUT", "300"))
+    CACHE_KEY_PREFIX = os.getenv("CACHE_KEY_PREFIX", "planventure:")
+    CACHE_REDIS_URL = os.getenv(
+        "CACHE_REDIS_URL", "redis://localhost:6379/1"
+    )
+    JSON_SORT_KEYS = False
 
 
 class DevelopmentConfig(Config):
@@ -49,6 +77,24 @@ class DevelopmentConfig(Config):
 
 class ProductionConfig(Config):
     DEBUG = False
+
+    @classmethod
+    def validate(cls):
+        missing = []
+        secret_key = os.getenv("SECRET_KEY", "")
+        jwt_secret_key = os.getenv("JWT_SECRET_KEY", "")
+        weather_api_key = os.getenv("WEATHER_API_KEY", "").strip()
+        if len(secret_key) < 32 or secret_key == "dev-secret-key":
+            missing.append("SECRET_KEY")
+        if len(jwt_secret_key) < 32 or jwt_secret_key.startswith("dev-jwt-secret"):
+            missing.append("JWT_SECRET_KEY")
+        if not weather_api_key:
+            missing.append("WEATHER_API_KEY")
+        if missing:
+            raise RuntimeError(
+                "Missing or insecure production environment variables: "
+                + ", ".join(missing)
+            )
 
 
 config_by_name = {
@@ -59,4 +105,7 @@ config_by_name = {
 
 def get_config():
     environment = os.getenv("FLASK_ENV", "development").lower()
-    return config_by_name.get(environment, DevelopmentConfig)
+    config = config_by_name.get(environment, DevelopmentConfig)
+    if config is ProductionConfig:
+        config.validate()
+    return config

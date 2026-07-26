@@ -7,3 +7,16 @@ python-dotenv==1.0.0
 # Authentication
 bcrypt==5.0.0
 flask-jwt-extended==4.7.4
+
+# Operations and database lifecycle
+flask-limiter==4.1.1
+flask-migrate==4.1.0
+waitress==3.0.2
+
+# External APIs and caching
+requests==2.34.2
+Flask-Caching==2.4.1
+redis==8.0.1
+
+# Testing
+pytest==9.1.1
