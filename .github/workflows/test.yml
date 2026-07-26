@@ -20,5 +20,5 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m pytest
         env:
-          DATABASE_URL: sqlite:///:memory:
+          DATABASE_URL: "sqlite:///:memory:"
           RATELIMIT_ENABLED: "false"
