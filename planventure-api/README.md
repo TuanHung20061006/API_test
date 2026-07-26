@@ -467,29 +467,33 @@ Authorization
 ## Tests
 
 ```powershell
-python -m unittest discover -s tests -v
+python -m pytest
 ```
 
 GitHub Actions runs the test suite for pushes and pull requests.
 
-## Production
+## Staging and Production
 
-Set `FLASK_ENV=production`, strong `SECRET_KEY` and `JWT_SECRET_KEY` values,
-`WEATHER_API_KEY`, and a production `DATABASE_URL`. Missing production secrets
-prevent startup.
+Use `.env.staging.example` or `.env.production.example` as a variable checklist.
+Do not deploy these example values or commit a populated `.env` file. Store real
+credentials in the deployment platform's secret manager.
 
-On Windows, serve the API with Waitress:
+Both deployment modes fail at startup unless they have:
+
+- secrets of at least 32 characters;
+- a non-SQLite database;
+- explicit non-localhost CORS origins;
+- a WeatherAPI key;
+- Redis-backed cache and rate-limit storage.
+
+Run database migrations before starting a new application version:
 
 ```powershell
+python -m alembic -c migrations/alembic.ini upgrade head
 waitress-serve --host=0.0.0.0 --port=5000 wsgi:app
 ```
 
-For multiple application instances, configure shared rate-limit storage (for
-example Redis) through `RATELIMIT_STORAGE_URI`. The in-memory storage is only
-appropriate for local development because limits are not shared between workers.
-
-Use shared Redis for both forecast cache and Flask-Limiter in a multi-instance
-deployment:
+Use separate Redis databases or namespaces for cache and rate-limit counters:
 
 ```env
 CACHE_TYPE=RedisCache
@@ -497,9 +501,7 @@ CACHE_REDIS_URL=redis://redis:6379/1
 RATELIMIT_STORAGE_URI=redis://redis:6379/2
 ```
 
-The same Redis server can be used, but separate Redis databases or namespaces
-are recommended so cache eviction and rate-limit counters remain operationally
-independent.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the complete staging/production checklist.
 
 ## Notes
 

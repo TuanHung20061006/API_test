@@ -27,6 +27,14 @@ def env_bool(name, default=False):
     return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def is_placeholder(value):
+    normalized_value = value.strip().lower()
+    return any(
+        marker in normalized_value
+        for marker in ("replace-with", "replace-me", "your-")
+    )
+
+
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
     JWT_SECRET_KEY = os.getenv(
@@ -75,37 +83,95 @@ class DevelopmentConfig(Config):
     DEBUG = True
 
 
-class ProductionConfig(Config):
+class DeploymentConfig(Config):
     DEBUG = False
+    PREFERRED_URL_SCHEME = "https"
+    SESSION_COOKIE_SECURE = True
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = "Lax"
+    RATELIMIT_HEADERS_ENABLED = True
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        "pool_pre_ping": True,
+        "pool_recycle": 300,
+    }
 
     @classmethod
     def validate(cls):
-        missing = []
+        invalid = []
         secret_key = os.getenv("SECRET_KEY", "")
         jwt_secret_key = os.getenv("JWT_SECRET_KEY", "")
         weather_api_key = os.getenv("WEATHER_API_KEY", "").strip()
-        if len(secret_key) < 32 or secret_key == "dev-secret-key":
-            missing.append("SECRET_KEY")
-        if len(jwt_secret_key) < 32 or jwt_secret_key.startswith("dev-jwt-secret"):
-            missing.append("JWT_SECRET_KEY")
-        if not weather_api_key:
-            missing.append("WEATHER_API_KEY")
-        if missing:
+        database_url = os.getenv("DATABASE_URL", "").strip()
+        cors_origins = os.getenv("CORS_ORIGINS", "").strip()
+        rate_limit_storage_uri = os.getenv(
+            "RATELIMIT_STORAGE_URI", "memory://"
+        ).strip()
+        cache_type = os.getenv("CACHE_TYPE", "SimpleCache").strip()
+        cache_redis_url = os.getenv("CACHE_REDIS_URL", "").strip()
+
+        if (
+            len(secret_key) < 32
+            or secret_key == "dev-secret-key"
+            or is_placeholder(secret_key)
+        ):
+            invalid.append("SECRET_KEY")
+        if (
+            len(jwt_secret_key) < 32
+            or jwt_secret_key.startswith("dev-jwt-secret")
+            or is_placeholder(jwt_secret_key)
+        ):
+            invalid.append("JWT_SECRET_KEY")
+        if not weather_api_key or is_placeholder(weather_api_key):
+            invalid.append("WEATHER_API_KEY")
+        if (
+            not database_url.startswith(("postgresql://", "postgresql+psycopg://"))
+            or is_placeholder(database_url)
+        ):
+            invalid.append("DATABASE_URL")
+        if (
+            not cors_origins
+            or "localhost" in cors_origins.lower()
+            or "127.0.0.1" in cors_origins
+            or "example.com" in cors_origins.lower()
+        ):
+            invalid.append("CORS_ORIGINS")
+        if not env_bool("RATELIMIT_ENABLED", True):
+            invalid.append("RATELIMIT_ENABLED")
+        if not rate_limit_storage_uri.lower().startswith(("redis://", "rediss://")):
+            invalid.append("RATELIMIT_STORAGE_URI")
+        if cache_type.lower() != "rediscache":
+            invalid.append("CACHE_TYPE")
+        if not cache_redis_url.lower().startswith(("redis://", "rediss://")):
+            invalid.append("CACHE_REDIS_URL")
+
+        if invalid:
             raise RuntimeError(
-                "Missing or insecure production environment variables: "
-                + ", ".join(missing)
+                "Missing or insecure deployment environment variables: "
+                + ", ".join(invalid)
             )
+
+
+class StagingConfig(DeploymentConfig):
+    pass
+
+
+class ProductionConfig(DeploymentConfig):
+    pass
 
 
 config_by_name = {
     "development": DevelopmentConfig,
+    "staging": StagingConfig,
     "production": ProductionConfig,
 }
 
 
 def get_config():
     environment = os.getenv("FLASK_ENV", "development").lower()
-    config = config_by_name.get(environment, DevelopmentConfig)
-    if config is ProductionConfig:
+    if environment not in config_by_name:
+        raise RuntimeError(f"Unsupported FLASK_ENV: {environment}")
+
+    config = config_by_name[environment]
+    if issubclass(config, DeploymentConfig):
         config.validate()
     return config
