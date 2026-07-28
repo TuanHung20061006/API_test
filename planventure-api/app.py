@@ -27,8 +27,11 @@ def create_app():
     migrate.init_app(app, db)
 
     @app.before_request
-    def authenticate_weather_request_before_rate_limit():
-        if request.endpoint == "weather.get_trip_weather":
+    def authenticate_rate_limited_user_request():
+        if request.endpoint in {
+            "weather.get_trip_weather",
+            "ai_advice.get_trip_ai_advice",
+        }:
             verify_jwt_in_request()
 
     limiter.init_app(app)
@@ -58,11 +61,12 @@ def create_app():
     # transport logger from exposing request URLs (and therefore provider keys).
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-    from routes import auth_bp, trips_bp, weather_bp
+    from routes import ai_advice_bp, auth_bp, trips_bp, weather_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(trips_bp)
     app.register_blueprint(weather_bp)
+    app.register_blueprint(ai_advice_bp)
 
     @app.route("/")
     def home():
@@ -83,11 +87,14 @@ def create_app():
 
     @app.errorhandler(429)
     def handle_rate_limit_exceeded(error):
+        message = "Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau."
+        if request.endpoint == "ai_advice.get_trip_ai_advice":
+            message = "Rate limit exceeded. Try again later."
         response = jsonify(
             {
                 "error": {
                     "code": "RATE_LIMIT_EXCEEDED",
-                    "message": "Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau.",
+                    "message": message,
                 }
             }
         )

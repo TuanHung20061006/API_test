@@ -27,6 +27,19 @@ def env_bool(name, default=False):
     return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def env_positive_int(name, default):
+    raw_value = os.getenv(name, str(default)).strip()
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer.") from exc
+
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer.")
+
+    return value
+
+
 def is_placeholder(value):
     normalized_value = value.strip().lower()
     return any(
@@ -69,6 +82,19 @@ class Config:
     WEATHER_CACHE_TTL_SECONDS = int(os.getenv("WEATHER_CACHE_TTL_SECONDS", "900"))
     WEATHER_RATE_LIMIT = os.getenv(
         "WEATHER_RATE_LIMIT", "30 per minute;300 per day"
+    )
+    GEMINI_ENABLED = env_bool("GEMINI_ENABLED", False)
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip()
+    GEMINI_TIMEOUT_SECONDS = env_positive_int("GEMINI_TIMEOUT_SECONDS", 30)
+    GEMINI_ADVICE_CACHE_TTL_SECONDS = env_positive_int(
+        "GEMINI_ADVICE_CACHE_TTL_SECONDS", 3600
+    )
+    GEMINI_ADVICE_RATE_LIMIT = os.getenv(
+        "GEMINI_ADVICE_RATE_LIMIT", "5 per hour"
+    ).strip()
+    GEMINI_ADVICE_MAX_REQUEST_BYTES = env_positive_int(
+        "GEMINI_ADVICE_MAX_REQUEST_BYTES", 32768
     )
     CACHE_TYPE = os.getenv("CACHE_TYPE", "SimpleCache")
     CACHE_DEFAULT_TIMEOUT = int(os.getenv("CACHE_DEFAULT_TIMEOUT", "300"))
