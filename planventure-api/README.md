@@ -13,6 +13,8 @@ Planventure API is a Flask REST API for user authentication and trip planning. I
 - Auth middleware for protected routes
 - Trip CRUD endpoints
 - Default itinerary template generation
+- On-demand Gemini trip advice with structured responses
+- Optional weather-aware AI review with per-user rate limiting and caching
 - SQLite local database support
 - CORS configured for React and Vite development servers
 
@@ -24,6 +26,8 @@ Planventure API is a Flask REST API for user authentication and trip planning. I
 - Flask-JWT-Extended
 - Flask-CORS
 - bcrypt
+- google-genai
+- Pydantic
 - python-dotenv
 - SQLite
 
@@ -420,6 +424,122 @@ Weather errors use a stable machine-readable code:
 }
 ```
 
+## Gemini Trip Advice
+
+Authenticated users can explicitly ask Gemini to review an existing trip. The
+application does not call Gemini when a trip is created, does not automatically
+change the trip or itinerary, and does not store an AI conversation history.
+Weather context is optional. Successful advice is strictly validated and
+returned as structured JSON, cached for a configurable period, and protected by
+a per-user rate limit.
+
+### Request Trip Advice
+
+```http
+POST /trip/<int:trip_id>/ai-advice
+Authorization: Bearer <access_token>
+Content-Type: application/json
+```
+
+The authenticated user must own the trip. A missing trip and a trip owned by
+another user both return `404`.
+
+Example request:
+
+```json
+{
+  "mode": "review",
+  "language": "vi",
+  "include_weather": true,
+  "regenerate": false,
+  "preferences": {
+    "budget": "medium",
+    "pace": "relaxed",
+    "interests": [
+      "ẩm thực",
+      "văn hóa",
+      "chụp ảnh"
+    ],
+    "transport": "xe máy",
+    "dietary_requirements": [],
+    "notes": "Không muốn di chuyển quá nhiều trong một ngày."
+  }
+}
+```
+
+Only `mode: "review"` is currently supported. Set `include_weather` to `false`
+to review the trip without resolving WeatherAPI data. Set `regenerate` to
+`true` to bypass an existing AI cache entry and request new advice; the request
+still counts toward the per-user rate limit.
+
+Example response:
+
+```json
+{
+  "trip_id": 123,
+  "mode": "review",
+  "advice": {
+    "summary": "Kế hoạch nhìn chung hợp lý.",
+    "overall_score": 8,
+    "strengths": [],
+    "issues": [],
+    "recommendations": [],
+    "weather_advice": [],
+    "packing_list": [],
+    "disclaimer": "Đề xuất do AI tạo và cần được kiểm tra."
+  },
+  "warnings": [],
+  "meta": {
+    "cache_hit": false,
+    "weather_cache_hit": true
+  }
+}
+```
+
+Expected AI error codes:
+
+| Code | Meaning |
+|---|---|
+| `AI_DISABLED` | Gemini trip advice is disabled |
+| `AI_NOT_CONFIGURED` | The backend does not have usable Gemini configuration |
+| `AI_INVALID_REQUEST` | The request failed validation |
+| `AI_UNSUPPORTED_MODE` | The requested mode is not supported |
+| `AI_REQUEST_TOO_LARGE` | The request body exceeds the AI-specific limit |
+| `AI_PROVIDER_AUTHENTICATION_FAILED` | Gemini rejected provider credentials or permissions |
+| `AI_PROVIDER_TIMEOUT` | Gemini exceeded the configured timeout |
+| `AI_PROVIDER_RATE_LIMITED` | Gemini provider quota or rate limit was reached |
+| `AI_PROVIDER_UNAVAILABLE` | Gemini is temporarily unavailable |
+| `AI_INVALID_RESPONSE` | Gemini output failed structured validation |
+| `RATE_LIMIT_EXCEEDED` | The authenticated user exceeded the endpoint limit |
+
+### Local Gemini Configuration
+
+Keep the provider key only in the local `.env` file:
+
+```env
+GEMINI_ENABLED=true
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-3.6-flash
+GEMINI_TIMEOUT_SECONDS=30
+GEMINI_ADVICE_CACHE_TTL_SECONDS=3600
+GEMINI_ADVICE_RATE_LIMIT=5 per hour
+GEMINI_ADVICE_MAX_REQUEST_BYTES=32768
+```
+
+Fill `GEMINI_API_KEY` in the ignored local `.env` file and never commit it.
+Bruno does not need the Gemini key: it sends the user's bearer token to
+Planventure, and only the backend communicates with Gemini.
+
+Recommended Bruno smoke flow:
+
+```text
+Health
+→ Login
+→ Create Trip
+→ Trip Weather
+→ Trip AI Advice
+```
+
 ## Bruno Testing Flow
 
 1. Start Flask:
@@ -445,6 +565,10 @@ Authorization: Bearer <access_token>
 ```http
 GET http://127.0.0.1:5000/trip/1
 ```
+
+7. Get normalized weather with `GET /trip/1/weather`.
+
+8. Request structured Gemini advice with `POST /trip/1/ai-advice`.
 
 ## CORS
 
