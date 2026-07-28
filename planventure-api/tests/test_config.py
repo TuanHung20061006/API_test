@@ -1,9 +1,28 @@
+import importlib.util
 import os
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from config import ProductionConfig, StagingConfig, get_config
+
+
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+CONFIG_PATH = PROJECT_DIR / "config.py"
+
+
+def load_isolated_config(environment):
+    spec = importlib.util.spec_from_file_location(
+        "planventure_isolated_config",
+        CONFIG_PATH,
+    )
+    config_module = importlib.util.module_from_spec(spec)
+    with (
+        patch.dict(os.environ, environment, clear=True),
+        patch("dotenv.load_dotenv"),
+    ):
+        spec.loader.exec_module(config_module)
+    return config_module
 
 
 class DeploymentConfigTestCase(unittest.TestCase):
@@ -85,11 +104,12 @@ class DeploymentConfigTestCase(unittest.TestCase):
         self.assertIn("WEATHER_API_KEY", message)
 
     def test_example_files_require_replacement_before_deployment(self):
-        project_dir = Path(__file__).resolve().parents[1]
-
         for file_name in (".env.staging.example", ".env.production.example"):
             values = {}
-            for line in (project_dir / file_name).read_text(encoding="utf-8").splitlines():
+            example_lines = (PROJECT_DIR / file_name).read_text(
+                encoding="utf-8"
+            ).splitlines()
+            for line in example_lines:
                 if line and not line.startswith("#"):
                     name, value = line.split("=", 1)
                     values[name] = value
@@ -98,6 +118,93 @@ class DeploymentConfigTestCase(unittest.TestCase):
                 with patch.dict(os.environ, values, clear=True):
                     with self.assertRaises(RuntimeError):
                         get_config()
+
+
+class GeminiConfigTestCase(unittest.TestCase):
+    def test_gemini_defaults(self):
+        config_module = load_isolated_config({})
+
+        self.assertIs(config_module.Config.GEMINI_ENABLED, False)
+        self.assertEqual(config_module.Config.GEMINI_API_KEY, "")
+        self.assertEqual(config_module.Config.GEMINI_MODEL, "gemini-3.6-flash")
+        self.assertEqual(config_module.Config.GEMINI_TIMEOUT_SECONDS, 30)
+        self.assertEqual(
+            config_module.Config.GEMINI_ADVICE_CACHE_TTL_SECONDS,
+            3600,
+        )
+        self.assertEqual(
+            config_module.Config.GEMINI_ADVICE_RATE_LIMIT,
+            "5 per hour",
+        )
+        self.assertEqual(
+            config_module.Config.GEMINI_ADVICE_MAX_REQUEST_BYTES,
+            32768,
+        )
+
+    def test_gemini_environment_overrides(self):
+        config_module = load_isolated_config(
+            {
+                "GEMINI_ENABLED": "1",
+                "GEMINI_API_KEY": "test-gemini-key-not-real",
+                "GEMINI_MODEL": "test-gemini-model",
+                "GEMINI_TIMEOUT_SECONDS": "45",
+                "GEMINI_ADVICE_CACHE_TTL_SECONDS": "7200",
+                "GEMINI_ADVICE_RATE_LIMIT": "7 per hour",
+                "GEMINI_ADVICE_MAX_REQUEST_BYTES": "16384",
+            }
+        )
+
+        self.assertIs(config_module.Config.GEMINI_ENABLED, True)
+        self.assertEqual(
+            config_module.Config.GEMINI_API_KEY,
+            "test-gemini-key-not-real",
+        )
+        self.assertEqual(config_module.Config.GEMINI_MODEL, "test-gemini-model")
+        self.assertEqual(config_module.Config.GEMINI_TIMEOUT_SECONDS, 45)
+        self.assertEqual(
+            config_module.Config.GEMINI_ADVICE_CACHE_TTL_SECONDS,
+            7200,
+        )
+        self.assertEqual(
+            config_module.Config.GEMINI_ADVICE_RATE_LIMIT,
+            "7 per hour",
+        )
+        self.assertEqual(
+            config_module.Config.GEMINI_ADVICE_MAX_REQUEST_BYTES,
+            16384,
+        )
+
+    def test_gemini_boolean_values_follow_existing_convention(self):
+        for raw_value, expected in (
+            ("true", True),
+            ("1", True),
+            ("false", False),
+            ("0", False),
+        ):
+            with self.subTest(raw_value=raw_value):
+                config_module = load_isolated_config(
+                    {"GEMINI_ENABLED": raw_value}
+                )
+                self.assertIs(config_module.Config.GEMINI_ENABLED, expected)
+
+    def test_gemini_positive_integer_settings_reject_invalid_values(self):
+        setting_names = (
+            "GEMINI_TIMEOUT_SECONDS",
+            "GEMINI_ADVICE_CACHE_TTL_SECONDS",
+            "GEMINI_ADVICE_MAX_REQUEST_BYTES",
+        )
+
+        for setting_name in setting_names:
+            for invalid_value in ("0", "-1", "not-a-number"):
+                with self.subTest(
+                    setting_name=setting_name,
+                    invalid_value=invalid_value,
+                ):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        f"{setting_name} must be a positive integer",
+                    ):
+                        load_isolated_config({setting_name: invalid_value})
 
 
 if __name__ == "__main__":
