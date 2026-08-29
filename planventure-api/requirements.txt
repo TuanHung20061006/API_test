@@ -16,7 +16,7 @@ waitress==3.0.2
 
 # External APIs and caching
 requests==2.34.2
-Flask-Caching==2.4.1
+Flask-Caching==2.5.0
 redis==8.0.1
 
 # Testing
